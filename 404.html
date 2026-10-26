@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Deho360</title>
+<style>
+  :root { --bg: #08161f; --panel: #0e222c; --line: #1c3a46; --text: #e3eeee; --faint: #8fa9ae; --accent: #3dd6c0; --on-accent: #04201c; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, "Noto Sans Bengali", "Hind Siliguri", sans-serif; }
+  main { min-height: 100%; display: grid; place-items: center; padding: 16px; }
+  form { width: 100%; max-width: 360px; padding: 24px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); }
+  h1 { margin: 0 0 6px; font-size: 1.4rem; }
+  h1 span { color: var(--accent); }
+  p { margin: 0 0 16px; color: var(--faint); font-size: 14px; line-height: 1.5; }
+  input { width: 100%; min-height: 48px; padding: 0 14px; border-radius: 12px; border: 1px solid #2a4855; background: var(--bg); color: var(--text); font: inherit; font-size: 18px; letter-spacing: 0.08em; }
+  button { width: 100%; min-height: 48px; margin-top: 12px; border: 0; border-radius: 24px; background: var(--accent); color: var(--on-accent); font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  input:focus-visible, button:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  .msg { min-height: 1.5em; margin: 12px 0 0; color: #ffb27a; }
+</style>
+</head>
+<body>
+<main>
+  <form id="gate" autocomplete="off">
+    <h1>Deho<span>360</span></h1>
+    <p>এই demo শুধু আমন্ত্রিতদের জন্য। আপনাকে দেওয়া কোডটা লিখুন।<br>This demo is by invitation. Enter the code you were given.</p>
+    <input id="code" name="code" inputmode="text" autocapitalize="off" spellcheck="false" aria-label="কোড / Code" required>
+    <button id="go" type="submit">খুলুন · Open</button>
+    <p class="msg" id="msg" role="status"></p>
+  </form>
+</main>
+<script>
+(() => {
+  const form = document.getElementById("gate");
+  const input = document.getElementById("code");
+  const go = document.getElementById("go");
+  const msg = document.getElementById("msg");
+  const from64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const normalise = (s) => s.replace(/[\s-]+/g, "").toLowerCase();
+
+  if (!("serviceWorker" in navigator) || !window.crypto?.subtle) {
+    msg.textContent = "এই browser-এ চলবে না। Chrome বা Safari-র নতুন version-এ খুলুন। · Please open in a recent Chrome or Safari.";
+    go.disabled = true;
+    return;
+  }
+
+  navigator.serviceWorker.startMessages();
+
+  async function open(code) {
+    go.disabled = true;
+    msg.textContent = "খোলা হচ্ছে… · Opening…";
+    try {
+      const lock = await (await fetch("lock.json", { cache: "no-store" })).json();
+      const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(normalise(code)), "PBKDF2", false, ["deriveKey"]);
+      const key = await crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt: from64(lock.salt), iterations: lock.iterations, hash: "SHA-256" },
+        material,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt"],
+      );
+      const check = from64(lock.check);
+      try {
+        await crypto.subtle.decrypt({ name: "AES-GCM", iv: check.slice(0, 12), additionalData: new TextEncoder().encode("check") }, key, check.slice(12));
+      } catch {
+        msg.textContent = "কোড ঠিক হয়নি। · That code is not right.";
+        go.disabled = false;
+        input.select();
+        return;
+      }
+      await navigator.serviceWorker.register("sw.js", { scope: "./" });
+      const reg = await navigator.serviceWorker.ready;
+      await new Promise((resolve) => {
+        navigator.serviceWorker.addEventListener("message", (e) => e.data?.type === "stored" && resolve(), { once: true });
+        reg.active.postMessage({ type: "key", key });
+      });
+      location.replace(location.pathname);
+    } catch (e) {
+      msg.textContent = "খোলা গেল না, আবার চেষ্টা করুন। · Could not open, please try again.";
+      go.disabled = false;
+    }
+  }
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (input.value.trim()) open(input.value);
+  });
+
+  // A link can carry the code after #k= ; the part after # never reaches the server.
+  const k = new URLSearchParams(location.hash.slice(1)).get("k");
+  if (k) {
+    history.replaceState(null, "", location.pathname);
+    input.value = k;
+    open(k);
+  } else {
+    input.focus();
+  }
+})();
+</script>
+</body>
+</html>
